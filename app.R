@@ -409,7 +409,7 @@ server <- shinyServer(function(input, output, session) {
   add_numeric_rule(input_validator, "bathrooms", max_limit = MAX_BATHROOMS)
 
   # Create a data frame with data from local JSON
-  dataframes <- reactiveVal(create_dataframes_from_json("nj-data - Copy.json"))
+  dataframes <- reactiveVal(create_dataframes_from_json("nj-data.json"))
 
   # Observe state when its value change, load corresponding CITIES
   observeEvent(input$state, {
