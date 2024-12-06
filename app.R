@@ -155,8 +155,8 @@ ui <- shinyUI(page_sidebar(
       inputId = "priceSlider",
       label = HTML(create_label("Price range ($)")),
       min = 0,
-      max = 100000,
-      value = c(0, 100000),
+      max = 100000000,
+      value = c(0, 100000000),
       ticks = FALSE
     ),
     tags$div(
@@ -208,13 +208,13 @@ ui <- shinyUI(page_sidebar(
           card_header("Density of living area (sq ft)",
             class = "bg-primary"
           ),
-          card_body(plotOutput("livingAreaAndLotAreaGraph"))
+          card_body(plotOutput("livingAreaDensityGraph"))
         ),
         card(
           card_header("Median price by listing type",
             class = "bg-primary"
           ),
-          card_body(plotOutput("averagePriceByListingType"))
+          card_body(plotOutput("medianPriceByListingType"))
         )
       )
     ),
@@ -257,25 +257,23 @@ ui <- shinyUI(page_sidebar(
 create_dataframes_from_json <- function(json) {
   # Convert json into R dataframe
   raw_df <- fromJSON(json)
-
+  
   # Remove nested history dataframe from property dataframe
   property_df <- as.data.frame(raw_df) %>%
     distinct(latitude, longitude, .keep_all = TRUE)
-  # mutate(year_month = make_date(year = year(listedDate), month = month(listedDate)))
-  # mutate(listedYear = year(listedDate), listedMonth = month(listedDate))
-
+  
   property_df$history <- NULL
-
+  
   property_df$formatedListedDate <- as_date(property_df$listedDate)
-
+  
   property_df$listingType <- str_replace(
     property_df$listingType, "New Construction", "New build"
   )
-
+  
   property_df$listingType <- str_replace(
     property_df$listingType, "Short Sale", "Short sale"
   )
-
+  
   # Extract property history records into a new dataframe
   # lapply: Apply a function over a list or vector
   nested_history_list <- lapply(names(raw_df$history), function(date) {
@@ -284,23 +282,26 @@ create_dataframes_from_json <- function(json) {
     nested_history_df <- raw_df$history[[date]]
     nested_history_df$date <- date
     nested_history_df$id <- raw_df$id
-
+    
     return(nested_history_df)
   })
-
+  
   # Combine all nested dataframes into a single data frame
-  history_df <- bind_rows(nested_history_list) %>%
-    filter(!is.na(event))
-
-  # Rename columns
-  history_df <- history_df %>%
-    rename(
-      "Date" = date,
-      "Listing type" = listingType,
-      "Price" = price,
-      "Event" = event
-    )
-
+  history_df <- bind_rows(nested_history_list)
+  
+  if ("event" %in% names(history_df)) {
+    history_df <- history_df %>%
+      filter(!is.na(event)) %>%
+      rename(
+        "Date" = date,
+        "Listing type" = listingType,
+        "Price" = price,
+        "Event" = event
+      )
+  } else {
+    history_df <- NULL
+  }
+  
   return(list(property_df = property_df, history_df = history_df))
 }
 
@@ -408,7 +409,7 @@ server <- shinyServer(function(input, output, session) {
   add_numeric_rule(input_validator, "bathrooms", max_limit = MAX_BATHROOMS)
 
   # Create a data frame with data from local JSON
-  dataframes <- reactiveVal(create_dataframes_from_json("nj-data.json"))
+  dataframes <- reactiveVal(create_dataframes_from_json("nj-data - Copy.json"))
 
   # Observe state when its value change, load corresponding CITIES
   observeEvent(input$state, {
@@ -624,26 +625,6 @@ server <- shinyServer(function(input, output, session) {
 
   # Listed date and price graph (price trend)
   output$listedDateAndPriceGraph <- renderPlot({
-    # filtered_year <- filtered_property_df() %>%
-    #   mutate(year = year(formatedListedDate)) %>%
-    #   filter(year %in% tail(sort(unique(year)), 2)) %>%
-    #   select(-year)
-    #----
-    # data_grouped_by_year <- filtered_property_df() %>%
-    #   group_by(year_month) %>%
-    #   summarise(median_Price = n(), .groups = "drop")
-    #
-    # ts_data <- ts(data_grouped_by_year$median_Price,
-    #               start = c(year(min(data_grouped_by_year$year_month)),
-    #                         month(min(data_grouped_by_year$year_month))),
-    #               frequency = 12
-    #               )
-    # # Fit an ARIMA model using the ts data
-    # arima_model <- auto.arima(ts_data)
-    #
-    # # Forecast for the next 12 months
-    # forecasted_period <- forecast(arima_model, h = 12)
-    # autoplot(forecasted_period) +
     ggplot(
       filtered_property_df(),
       aes(
@@ -681,8 +662,8 @@ server <- shinyServer(function(input, output, session) {
       )
   })
 
-  # Living area and lot area
-  output$livingAreaAndLotAreaGraph <- renderPlot({
+  # Living area density
+  output$livingAreaDensityGraph <- renderPlot({
     ggplot(
       filtered_property_df(),
       aes(x = squareFootage)
@@ -717,7 +698,7 @@ server <- shinyServer(function(input, output, session) {
   })
 
   # Price analysis by listing type
-  output$averagePriceByListingType <- renderPlot({
+  output$medianPriceByListingType <- renderPlot({
     average_price_by_listing_type <- filtered_property_df() %>%
       group_by(listingType) %>%
       summarise(median_price = median(price))
@@ -841,20 +822,26 @@ server <- shinyServer(function(input, output, session) {
     output$listingCompany <- renderText({
       property_by_id$listingOffice$name
     })
-
-    # Filter the history data for the selected house
-    filtered_history <- dataframes()$history_df %>% filter(id == property_id)
-    filtered_history$Price <- paste0("$", prettyNum(filtered_history$Price, big.mark = ","))
-
-    # Display columns in a new order
-    new_order <- c("Date", "Event", "Listing type", "Price")
-    selected_history <- filtered_history[, new_order] %>%
-      arrange(desc(Date))
-
-    # Render the history table
-    output$listingHistory <- renderDT({
-      datatable(selected_history, options = list(pageLength = 2), rownames = FALSE)
-    })
+    
+    if (!is.null(dataframes()$history_df)) {
+      # Filter the history data for the selected house
+      filtered_history <- dataframes()$history_df %>% filter(id == property_id)
+      filtered_history$Price <- paste0("$", 
+                                       prettyNum(filtered_history$Price, 
+                                                 big.mark = ","))
+      
+      # Display columns in a new order
+      new_order <- c("Date", "Event", "Listing type", "Price")
+      selected_history <- filtered_history[, new_order] %>%
+        arrange(desc(Date))
+      
+      # Render the history table
+      output$listingHistory <- renderDT({
+        datatable(selected_history, 
+                  options = list(pageLength = 2), 
+                  rownames = FALSE)
+      })
+    }
   })
 })
 
