@@ -463,7 +463,7 @@ server <- shinyServer(function(input, output, session) {
     response <- GET(
       base_url,
       query = search_query,
-      add_headers("X-Api-Key" = "?"),
+      add_headers("X-Api-Key" = "c42ed291b8ec4be79e782ed45ad0fe59"),
       content_type("application/octet-stream"),
       accept("application/json")
     )
